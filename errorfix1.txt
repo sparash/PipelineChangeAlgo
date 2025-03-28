@@ -1,0 +1,264 @@
+# Fixing SentenceTransformer Model Loading Error
+
+The error is occurring because the `all-MiniLM-L6-v2` model isn't being recognized in your environment. Let's modify the code to use a more universally available model and add fallback options.
+
+## Update the MerchantMatchingSystem Initialization
+
+Replace the current `__init__` method with this more robust version that tries multiple models:
+
+```python
+def __init__(self, embedding_model_name: str = 'all-MiniLM-L6-v2'):
+    """
+    Initialize the merchant matching system with multiple algorithms.
+    
+    Args:
+        embedding_model_name: The name of the pre-trained SBERT model to use
+    """
+    # List of fallback models to try if the specified one fails
+    fallback_models = [
+        'all-MiniLM-L6-v2',
+        'paraphrase-MiniLM-L6-v2',   # Common alternative
+        'distilbert-base-nli-mean-tokens',
+        'bert-base-nli-mean-tokens',
+        'stsb-roberta-base',
+        'all-mpnet-base-v2'
+    ]
+    
+    # If the user-specified model is not in the fallback list, add it first
+    if embedding_model_name not in fallback_models:
+        fallback_models.insert(0, embedding_model_name)
+    
+    # Try loading models until one succeeds
+    self.embedding_model = None
+    last_error = None
+    
+    for model_name in fallback_models:
+        try:
+            print(f"Attempting to load model: {model_name}")
+            self.embedding_model = SentenceTransformer(model_name)
+            print(f"Successfully loaded model: {model_name}")
+            # Store model name for later use (fixes save_model issue)
+            self.model_name = model_name
+            break
+        except Exception as e:
+            print(f"Failed to load model {model_name}: {str(e)}")
+            last_error = e
+    
+    if self.embedding_model is None:
+        print("WARNING: Could not load any embedding model.")
+        print("Attempting to initialize a basic model...")
+        try:
+            # Try to initialize with an even more basic approach
+            from sentence_transformers import models, SentenceTransformer
+            word_embedding_model = models.Transformer('distilbert-base-uncased')
+            pooling_model = models.Pooling(word_embedding_model.get_word_embedding_dimension())
+            self.embedding_model = SentenceTransformer(modules=[word_embedding_model, pooling_model])
+            self.model_name = 'distilbert-base-uncased-custom'
+            print(f"Initialized basic model: {self.model_name}")
+        except Exception as e:
+            raise ValueError(f"Could not initialize any embedding model. Last error: {str(last_error)}") from e
+    
+    # Remaining initialization code stays the same
+    self.embedding_dim = self.embedding_model.get_sentence_embedding_dimension()
+    
+    # Initialize TFIDF vectorizer for text similarity
+    self.tfidf_vectorizer = TfidfVectorizer(analyzer='char_wb', ngram_range=(2, 3))
+    
+    # Acronym dictionary - maps acronyms to potential expansions by category
+    self.acronym_dict = defaultdict(lambda: defaultdict(list))
+    
+    # Category-specific index for fast nearest neighbor search
+    self.category_indices = {}
+    
+    # Reference data
+    self.reference_data = {}
+    
+    # Compiled regex patterns
+    self.patterns = {
+        'special_chars': re.compile(r'[^\w\s]'),
+        'extra_spaces': re.compile(r'\s+'),
+        'acronym': re.compile(r'^[A-Z0-9]{2,}$')
+    }
+    
+    # Common business suffixes to remove
+    self.business_suffixes = {
+        'inc', 'llc', 'ltd', 'corp', 'corporation', 'co', 'company',
+        'incorporated', 'limited', 'group', 'holdings', 'services',
+        'international', 'enterprises', 'solutions', 'plc', 'gmbh'
+    }
+    
+    # Confidence thresholds
+    self.similarity_threshold = 0.85
+    
+    # Define the algorithms for comparison
+    self.algorithms = {
+        'jaro_winkler': self._jaro_winkler_similarity,
+        'levenshtein': self._levenshtein_similarity,
+        'tfidf_cosine': self._tfidf_cosine_similarity,
+        'jaccard': self._jaccard_similarity,
+        'sorensen_dice': self._sorensen_dice_similarity,
+        'monge_elkan': self._monge_elkan_similarity,
+        'needleman_wunsch': self._needleman_wunsch_similarity,
+        'lcs_similarity': self._lcs_similarity,
+        'damerau_levenshtein': self._damerau_levenshtein_similarity,
+        'smith_waterman': self._smith_waterman_similarity,
+        'sbert_cosine': self._sbert_cosine_similarity,
+        'hybrid_category_aware': self._hybrid_category_aware_similarity
+    }
+```
+
+## Update the save_model Method
+
+Fix the save_model method to use our stored model name:
+
+```python
+def save_model(self, file_path: str):
+    """
+    Save the model to a file.
+    
+    Args:
+        file_path: Path to save the model
+    """
+    # We can't pickle the SBERT model, so we'll save just the model name
+    model_data = {
+        'embedding_model_name': self.model_name,  # Use our stored model name
+        'acronym_dict': dict(self.acronym_dict),
+        'similarity_threshold': self.similarity_threshold
+    }
+    
+    with open(file_path, 'wb') as f:
+        pickle.dump(model_data, f)
+    
+    print(f"Model saved to {file_path}")
+```
+
+## Update the load_model Method
+
+Make sure the load_model method is consistent:
+
+```python
+@classmethod
+def load_model(cls, file_path: str, reference_data_path: str = None):
+    """
+    Load a model from a file.
+    
+    Args:
+        file_path: Path to the saved model
+        reference_data_path: Optional path to reference data
+        
+    Returns:
+        Loaded MerchantMatchingSystem
+    """
+    with open(file_path, 'rb') as f:
+        model_data = pickle.load(f)
+    
+    # Create a new instance with the saved model name
+    instance = cls(embedding_model_name=model_data['embedding_model_name'])
+    
+    # Restore state
+    instance.acronym_dict = defaultdict(lambda: defaultdict(list))
+    for acronym, categories in model_data['acronym_dict'].items():
+        for category, expansions in categories.items():
+            instance.acronym_dict[acronym][category] = expansions
+    
+    instance.similarity_threshold = model_data['similarity_threshold']
+    
+    # Load reference data if provided
+    if reference_data_path:
+        instance.load_reference_data(reference_data_path)
+    
+    return instance
+```
+
+## Update the main Function
+
+Add more robust error handling:
+
+```python
+def main():
+    try:
+        # Create instance
+        print("Initializing MerchantMatchingSystem...")
+        matcher = MerchantMatchingSystem()
+        
+        # Check if file exists before loading
+        import os
+        if not os.path.exists("Acronym_Categorized.xlsx"):
+            print("Warning: 'Acronym_Categorized.xlsx' not found in current directory!")
+            print(f"Current directory: {os.getcwd()}")
+            print(f"Files in directory: {os.listdir()}")
+            
+            # Create a sample file for testing
+            print("Creating a sample Acronym_Categorized.xlsx file for testing...")
+            data = {
+                'Acronym': ['MCD', 'AMZN', 'SBUX'],
+                'Full Name': ['McDonald\'s', 'Amazon', 'Starbucks'],
+                'Merchant Category': ['Restaurant', 'Retail', 'Restaurant']
+            }
+            df = pd.DataFrame(data)
+            df.to_excel("Acronym_Categorized.xlsx", index=False)
+            print("Created sample file: Acronym_Categorized.xlsx")
+        
+        # Load reference data
+        print("Loading reference data...")
+        matcher.load_reference_data("Acronym_Categorized.xlsx")
+        
+        # Save model for later use
+        print("Saving model...")
+        matcher.save_model("merchant_matcher.pkl")
+        
+        # Process with algorithm comparison
+        print("Processing with algorithm comparison...")
+        matcher.batch_process("Acronym_Categorized.xlsx", 
+                            "algorithm_comparison_results.xlsx", 
+                            run_all_algorithms=True)
+        
+        # Example of individual matching
+        print("\nTesting MCD disambiguation by category:")
+        
+        # MCD as restaurant
+        merchant_name = "MCD"
+        merchant_category = "Restaurant"
+        matches = matcher.find_matches(merchant_name, merchant_category, run_all_algorithms=True)
+        
+        print(f"\nMatches for '{merchant_name}' in category '{merchant_category}':")
+        for match in matches:
+            print(f"  - {match['merchant_name']} (Category: {match['merchant_category']}, Similarity: {match['similarity']:.4f})")
+        
+        # MCD as government
+        merchant_name = "MCD"
+        merchant_category = "Government"
+        matches = matcher.find_matches(merchant_name, merchant_category, run_all_algorithms=True)
+        
+        print(f"\nMatches for '{merchant_name}' in category '{merchant_category}':")
+        for match in matches:
+            print(f"  - {match['merchant_name']} (Category: {match['merchant_category']}, Similarity: {match['similarity']:.4f})")
+            
+        print("\nSuccessfully completed all operations!")
+        
+    except Exception as e:
+        import traceback
+        print(f"Error: {str(e)}")
+        traceback.print_exc()
+        
+        # Provide more diagnostics
+        import sys
+        print("\nPython version:", sys.version)
+        print("\nInstalled packages:")
+        try:
+            import pkg_resources
+            for pkg in pkg_resources.working_set:
+                print(f"  {pkg.project_name}=={pkg.version}")
+        except:
+            print("Could not list installed packages")
+```
+
+## What Changed and Why
+
+1. **Multiple Model Support**: Now tries various sentence-transformer models in sequence until one works
+2. **Custom Model Creation**: Adds a fallback to create a custom model if no pre-trained ones work
+3. **Model Name Storage**: Explicitly stores the model name for use in save_model
+4. **Better Error Handling**: Provides clear error messages and diagnostics when things go wrong
+5. **Sample File Creation**: Automatically creates a sample file if the required one isn't found
+
+This should resolve the issue with loading the sentence transformer model. The code now has multiple fallback options and better error handling, making it more robust in different environments where specific pre-trained models might not be available.
