@@ -1,0 +1,14 @@
+Algorithm,Accuracy,Precision,Recall,F1-Score,Correct,Total
+Hybrid (Category-Aware),0.5714,1.0000,0.5714,0.7273,56,98
+Jaro-Winkler (Category-Aware),0.4490,1.0000,0.4490,0.6197,44,98
+Embedding (Category-Aware),0.3673,1.0000,0.3673,0.5373,36,98
+Jaro-Winkler,0.3673,1.0000,0.3673,0.5373,36,98
+Embedding Similarity,0.3673,1.0000,0.3673,0.5373,36,98
+Levenshtein (Category-Aware),0.2959,1.0000,0.2959,0.4567,29,98
+Damerau-Levenshtein,0.2857,1.0000,0.2857,0.4444,28,98
+Fuzzy Levenshtein,0.2857,1.0000,0.2857,0.4444,28,98
+Token Sort Ratio,0.2653,1.0000,0.2653,0.4194,26,98
+Jaccard Bigram,0.2449,1.0000,0.2449,0.3934,24,98
+TF-IDF (Category-Aware),0.1020,1.0000,0.1020,0.1852,10,98
+TF-IDF Cosine,0.1020,1.0000,0.1020,0.1852,10,98
+Soundex,0.0408,1.0000,0.0408,0.0784,4,98
