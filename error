@@ -1,70 +1,47 @@
-Warning: pyahocorasick not available. Using fallback implementation.
-No sentence-transformers model found with name sentence-transformers/paraphrase-MiniLM-L6-v2. Creating a new one with mean pooling.
-Could not cache non-existence of file. Will ignore error and continue. Error: [Errno 13] Permission denied: '/home/jovyan/.cache'
----------------------------------------------------------------------------
-ValueError                                Traceback (most recent call last)
-Cell In[1], line 27
-     25 try:
-     26     from sentence_transformers import SentenceTransformer
----> 27     embedding_model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
-     28     embedding_available = True
-     29 except ImportError:
+import pandas as pd
+import numpy as np
+import re
+import string
+from Levenshtein import distance as levenshtein_distance
+from Levenshtein import jaro_winkler, ratio as levenshtein_ratio
+import textdistance
+from fuzzywuzzy import fuzz
+import jellyfish
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from collections import defaultdict
+import warnings
+warnings.filterwarnings('ignore')
 
-File /opt/conda/lib/python3.11/site-packages/sentence_transformers/SentenceTransformer.py:321, in SentenceTransformer.__init__(self, model_name_or_path, modules, device, prompts, default_prompt_name, similarity_fn_name, cache_folder, trust_remote_code, revision, local_files_only, token, use_auth_token, truncate_dim, model_kwargs, tokenizer_kwargs, config_kwargs, model_card_data, backend)
-    309         modules, self.module_kwargs = self._load_sbert_model(
-    310             model_name_or_path,
-    311             token=token,
-   (...)
-    318             config_kwargs=config_kwargs,
-    319         )
-    320     else:
---> 321         modules = self._load_auto_model(
-    322             model_name_or_path,
-    323             token=token,
-    324             cache_folder=cache_folder,
-    325             revision=revision,
-    326             trust_remote_code=trust_remote_code,
-    327             local_files_only=local_files_only,
-    328             model_kwargs=model_kwargs,
-    329             tokenizer_kwargs=tokenizer_kwargs,
-    330             config_kwargs=config_kwargs,
-    331         )
-    333 if modules is not None and not isinstance(modules, OrderedDict):
-    334     modules = OrderedDict([(str(idx), module) for idx, module in enumerate(modules)])
+# Try to import pyahocorasick, provide fallback if not available
+try:
+    import pyahocorasick
+    aho_corasick_available = True
+except ImportError:
+    print("Warning: pyahocorasick not available. Using fallback implementation.")
+    aho_corasick_available = False
 
-File /opt/conda/lib/python3.11/site-packages/sentence_transformers/SentenceTransformer.py:1472, in SentenceTransformer._load_auto_model(self, model_name_or_path, token, cache_folder, revision, trust_remote_code, local_files_only, model_kwargs, tokenizer_kwargs, config_kwargs)
-   1469 tokenizer_kwargs = shared_kwargs if tokenizer_kwargs is None else {**shared_kwargs, **tokenizer_kwargs}
-   1470 config_kwargs = shared_kwargs if config_kwargs is None else {**shared_kwargs, **config_kwargs}
--> 1472 transformer_model = Transformer(
-   1473     model_name_or_path,
-   1474     cache_dir=cache_folder,
-   1475     model_args=model_kwargs,
-   1476     tokenizer_args=tokenizer_kwargs,
-   1477     config_args=config_kwargs,
-   1478     backend=self.backend,
-   1479 )
-   1480 pooling_model = Pooling(transformer_model.get_word_embedding_dimension(), "mean")
-   1481 if not local_files_only:
-
-File /opt/conda/lib/python3.11/site-packages/sentence_transformers/models/Transformer.py:80, in Transformer.__init__(self, model_name_or_path, max_seq_length, model_args, tokenizer_args, config_args, cache_dir, do_lower_case, tokenizer_name_or_path, backend)
-     77 if config_args is None:
-     78     config_args = {}
----> 80 config, is_peft_model = self._load_config(model_name_or_path, cache_dir, backend, config_args)
-     81 self._load_model(model_name_or_path, config, cache_dir, backend, is_peft_model, **model_args)
-     83 if max_seq_length is not None and "model_max_length" not in tokenizer_args:
-
-File /opt/conda/lib/python3.11/site-packages/sentence_transformers/models/Transformer.py:145, in Transformer._load_config(self, model_name_or_path, cache_dir, backend, config_args)
-    141     from peft import PeftConfig
-    143     return PeftConfig.from_pretrained(model_name_or_path, **config_args, cache_dir=cache_dir), True
---> 145 return AutoConfig.from_pretrained(model_name_or_path, **config_args, cache_dir=cache_dir), False
-
-File /opt/conda/lib/python3.11/site-packages/transformers/models/auto/configuration_auto.py:1133, in AutoConfig.from_pretrained(cls, pretrained_model_name_or_path, **kwargs)
-   1130         if pattern in str(pretrained_model_name_or_path):
-   1131             return CONFIG_MAPPING[pattern].from_dict(config_dict, **unused_kwargs)
--> 1133 raise ValueError(
-   1134     f"Unrecognized model in {pretrained_model_name_or_path}. "
-   1135     f"Should have a `model_type` key in its {CONFIG_NAME}, or contain one of the following strings "
-   1136     f"in its name: {', '.join(CONFIG_MAPPING.keys())}"
-   1137 )
-
-ValueError: Unrecognized model in sentence-transformers/paraphrase-MiniLM-L6-v2. Should have a `model_type` key in its config.json, or contain one of the following strings in its name: albert, align, altclip, aria, aria_text, audio-spectrogram-transformer, autoformer, aya_vision, bamba, bark, bart, beit, bert, bert-generation, big_bird, bigbird_pegasus, biogpt, bit, blenderbot, blenderbot-small, blip, blip-2, bloom, bridgetower, bros, camembert, canine, chameleon, chinese_clip, chinese_clip_vision_model, clap, clip, clip_text_model, clip_vision_model, clipseg, clvp, code_llama, codegen, cohere, cohere2, colpali, conditional_detr, convbert, convnext, convnextv2, cpmant, ctrl, cvt, dab-detr, dac, data2vec-audio, data2vec-text, data2vec-vision, dbrx, deberta, deberta-v2, decision_transformer, deformable_detr, deit, depth_anything, depth_pro, deta, detr, diffllama, dinat, dinov2, dinov2_with_registers, distilbert, donut-swin, dpr, dpt, efficientformer, efficientnet, electra, emu3, encodec, encoder-decoder, ernie, ernie_m, esm, falcon, falcon_mamba, fastspeech2_conformer, flaubert, flava, fnet, focalnet, fsmt, funnel, fuyu, gemma, gemma2, gemma3, gemma3_text, git, glm, glpn, got_ocr2, gpt-sw3, gpt2, gpt_bigcode, gpt_neo, gpt_neox, gpt_neox_japanese, gptj, gptsan-japanese, granite, granitemoe, granitemoeshared, granitevision, graphormer, grounding-dino, groupvit, helium, hiera, hubert, ibert, idefics, idefics2, idefics3, idefics3_vision, ijepa, imagegpt, informer, instructblip, instructblipvideo, jamba, jetmoe, jukebox, kosmos-2, layoutlm, layoutlmv2, layoutlmv3, led, levit, lilt, llama, llava, llava_next, llava_next_video, llava_onevision, longformer, longt5, luke, lxmert, m2m_100, mamba, mamba2, marian, markuplm, mask2former, maskformer, maskformer-swin, mbart, mctct, mega, megatron-bert, mgp-str, mimi, mistral, mistral3, mixtral, mllama, mobilebert, mobilenet_v1, mobilenet_v2, mobilevit, mobilevitv2, modernbert, moonshine, moshi, mpnet, mpt, mra, mt5, musicgen, musicgen_melody, mvp, nat, nemotron, nezha, nllb-moe, nougat, nystromformer, olmo, olmo2, olmoe, omdet-turbo, oneformer, open-llama, openai-gpt, opt, owlv2, owlvit, paligemma, patchtsmixer, patchtst, pegasus, pegasus_x, perceiver, persimmon, phi, phi3, phimoe, pix2struct, pixtral, plbart, poolformer, pop2piano, prompt_depth_anything, prophetnet, pvt, pvt_v2, qdqbert, qwen2, qwen2_5_vl, qwen2_audio, qwen2_audio_encoder, qwen2_moe, qwen2_vl, rag, realm, recurrent_gemma, reformer, regnet, rembert, resnet, retribert, roberta, roberta-prelayernorm, roc_bert, roformer, rt_detr, rt_detr_resnet, rt_detr_v2, rwkv, sam, seamless_m4t, seamless_m4t_v2, segformer, seggpt, sew, sew-d, shieldgemma2, siglip, siglip2, siglip_vision_model, smolvlm, smolvlm_vision, speech-encoder-decoder, speech_to_text, speech_to_text_2, speecht5, splinter, squeezebert, stablelm, starcoder2, superglue, superpoint, swiftformer, swin, swin2sr, swinv2, switch_transformers, t5, table-transformer, tapas, textnet, time_series_transformer, timesformer, timm_backbone, timm_wrapper, trajectory_transformer, transfo-xl, trocr, tvlt, tvp, udop, umt5, unispeech, unispeech-sat, univnet, upernet, van, video_llava, videomae, vilt, vipllava, vision-encoder-decoder, vision-text-dual-encoder, visual_bert, vit, vit_hybrid, vit_mae, vit_msn, vitdet, vitmatte, vitpose, vitpose_backbone, vits, vivit, wav2vec2, wav2vec2-bert, wav2vec2-conformer, wavlm, whisper, xclip, xglm, xlm, xlm-prophetnet, xlm-roberta, xlm-roberta-xl, xlnet, xmod, yolos, yoso, zamba, zamba2, zoedepth
+# For embedding similarity - use TF-IDF as fallback
+try:
+    # Skip sentence-transformers since it's causing errors in your environment
+    print("Using TF-IDF vectorizer for text embeddings instead of sentence-transformers")
+    
+    class TfidfEmbedder:
+        def __init__(self):
+            self.vectorizer = TfidfVectorizer(analyzer='char_wb', ngram_range=(2, 4))
+            self.fitted = False
+        
+        def fit(self, texts):
+            self.vectorizer.fit(texts)
+            self.fitted = True
+        
+        def encode(self, texts, batch_size=None):
+            if not self.fitted:
+                self.fit(texts)
+            return self.vectorizer.transform(texts if isinstance(texts, list) else [texts]).toarray()
+    
+    embedding_model = TfidfEmbedder()
+    embedding_available = True
+except Exception as e:
+    print(f"Warning: Error initializing embeddings: {e}")
+    embedding_available = False
