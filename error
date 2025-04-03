@@ -1,47 +1,100 @@
-import pandas as pd
-import numpy as np
-import re
-import string
-from Levenshtein import distance as levenshtein_distance
-from Levenshtein import jaro_winkler, ratio as levenshtein_ratio
-import textdistance
-from fuzzywuzzy import fuzz
-import jellyfish
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from collections import defaultdict
-import warnings
-warnings.filterwarnings('ignore')
+# Why Jaro-Winkler Gives High Scores for Acronyms
 
-# Try to import pyahocorasick, provide fallback if not available
-try:
-    import pyahocorasick
-    aho_corasick_available = True
-except ImportError:
-    print("Warning: pyahocorasick not available. Using fallback implementation.")
-    aho_corasick_available = False
+The Jaro-Winkler algorithm is giving surprisingly good scores for these acronym-full name pairs due to several mathematical properties of the algorithm that happen to align well with how acronyms are formed. Let me explain this in detail.
 
-# For embedding similarity - use TF-IDF as fallback
-try:
-    # Skip sentence-transformers since it's causing errors in your environment
-    print("Using TF-IDF vectorizer for text embeddings instead of sentence-transformers")
-    
-    class TfidfEmbedder:
-        def __init__(self):
-            self.vectorizer = TfidfVectorizer(analyzer='char_wb', ngram_range=(2, 4))
-            self.fitted = False
-        
-        def fit(self, texts):
-            self.vectorizer.fit(texts)
-            self.fitted = True
-        
-        def encode(self, texts, batch_size=None):
-            if not self.fitted:
-                self.fit(texts)
-            return self.vectorizer.transform(texts if isinstance(texts, list) else [texts]).toarray()
-    
-    embedding_model = TfidfEmbedder()
-    embedding_available = True
-except Exception as e:
-    print(f"Warning: Error initializing embeddings: {e}")
-    embedding_available = False
+## How Jaro-Winkler Works
+
+First, the Jaro-Winkler similarity is calculated in two steps:
+
+1. **Basic Jaro Similarity**: 
+   ```
+   Jaro = (m/|s1| + m/|s2| + (m-t)/m) / 3
+   ```
+   Where:
+   - m = number of matching characters
+   - |s1| and |s2| = lengths of the two strings
+   - t = number of transpositions
+
+2. **Winkler Prefix Bonus**:
+   ```
+   Jaro-Winkler = Jaro + (l × p × (1-Jaro))
+   ```
+   Where:
+   - l = length of common prefix (up to 4 characters)
+   - p = scaling factor (typically 0.1)
+
+## Why It Works Well for Acronyms
+
+Let's break down specifically why this formula gives high scores for acronyms:
+
+### 1. The Proportion Effect
+
+For an acronym like "MCD" compared to "McDonalds":
+- All 3 characters in "MCD" appear in "McDonalds"
+- The m/|s1| component equals 3/3 = 1.0 (100% of acronym matches!)
+- Even though m/|s2| is lower (3/9 = 0.33), the high m/|s1| value pulls up the average
+
+This is a fundamental reason why Jaro-Winkler works unexpectedly well for acronyms - the algorithm rewards when a high percentage of the shorter string is matched, which is precisely what happens with acronyms.
+
+### 2. Character Matching Window
+
+Jaro considers characters a match if they appear within a certain distance window, calculated as:
+```
+max(|s1|, |s2|)/2 - 1
+```
+
+For acronyms formed from first letters (or prominent letters) of words in the full name, these characters typically appear in the correct positions to be considered matches under this rule.
+
+### 3. First Letter Matching (Prefix Bonus)
+
+Most acronyms start with the same letter as their full form:
+- "MCD" and "McDonalds" both start with M
+- "EU" and "European Union" both start with E
+- "GE" and "General Electric" both start with G
+
+This triggers the Winkler prefix bonus, which further increases the similarity score.
+
+### 4. Order Preservation
+
+Jaro-Winkler rewards when characters appear in the same order (fewer transpositions). Since acronyms often preserve the sequence of important characters from the full name, this increases the score.
+
+## Example Analysis: "MCD" and "McDonalds" (0.844)
+
+Let's walk through exactly why "MCD" gets a 0.844 score with "McDonalds":
+
+1. **Matching characters**: All 3 characters 'M', 'C', and 'D' from "MCD" appear in "McDonalds"
+2. **Character positions**: They appear in the correct order (M at position 0, C at position 2, D at position 5)
+3. **Jaro calculation**:
+   - m/|s1| = 3/3 = 1.0
+   - m/|s2| = 3/9 ≈ 0.33
+   - (m-t)/m = (3-0)/3 = 1.0 (no transpositions)
+   - Jaro = (1.0 + 0.33 + 1.0)/3 ≈ 0.78
+4. **Winkler bonus**:
+   - l = 1 (common prefix 'M')
+   - Winkler bonus = 1 × 0.1 × (1-0.78) ≈ 0.022
+   - Final score ≈ 0.78 + 0.022 ≈ 0.8 (close to the actual 0.844)
+
+## Example Analysis: "MD" and "McDonalds" (0.767)
+
+This is particularly interesting because "MD" shouldn't match "McDonalds" semantically, but still gets a high score:
+
+1. **Matching characters**: Both 'M' and 'D' from "MD" appear in "McDonalds"
+2. **Jaro calculation**:
+   - m/|s1| = 2/2 = 1.0 (100% of acronym matches!)
+   - m/|s2| = 2/9 ≈ 0.22
+   - (m-t)/m = (2-0)/2 = 1.0
+   - Jaro ≈ (1.0 + 0.22 + 1.0)/3 ≈ 0.74
+3. **Winkler bonus**:
+   - l = 1 (common prefix 'M')
+   - Final score ≈ 0.767
+
+## Conclusion: Mathematical Coincidence
+
+This is a classic case where an algorithm works well for a purpose it wasn't specifically designed for. Jaro-Winkler was designed for names and general string similarity, but its mathematical properties coincidentally align with how acronyms are formed:
+
+1. Acronyms contain characters that appear in the full name (high character match)
+2. These characters often appear in the same order (low transpositions)
+3. Acronyms are much shorter than full names (asymmetric length effect favors matches)
+4. The first character usually matches (prefix bonus)
+
+This explains why Jaro-Winkler can be effective as one component in an acronym matching system, despite not being specifically designed for this purpose. It's also why we needed to combine it with other algorithms (like acronym formation score and embedding similarity) to create a truly comprehensive matching system that understands the semantic meaning beyond just character patterns.
