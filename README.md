@@ -1,7 +1,6 @@
 # Merchant Matching Code Explanation
 
-Let me explain this merchant matching code in simple terms to help prepare you for your manager's questions.
-
+Let me explain this merchant matching code in simple terms.
 ## What is the Workflow?
 
 The code is designed to match abbreviated business names (DBANames like "MCD") with their full names (RawTransactionNames like "McDonald's"). The basic workflow looks like this:
